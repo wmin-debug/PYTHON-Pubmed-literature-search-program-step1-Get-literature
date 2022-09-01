@@ -1,0 +1,68 @@
+import gevent
+from gevent import monkey
+monkey.patch_all()
+from gevent.queue import Queue
+import time,requests,json,openpyxl,csv
+from bs4 import BeautifulSoup
+wb = openpyxl.Workbook()
+sheet = wb.active
+sheet.title = 'article'
+sheet['A1'] = 'num'
+sheet['B1'] = 'article_name'
+sheet['C1'] = 'link'
+sheet['D1'] = 'author'
+sheet['E1']='journal'
+sheet['F1']='IF'
+sheet['G1']='quartile'
+sheet['H1']='year'
+sheet['I1']='abstract'
+
+start = time.time()
+keyword=input('搜索关键词：')
+endfile1=str(keyword)+'.csv'
+endfile2=str(keyword)+'.xlsx'
+
+work = Queue()
+url_1 = 'https://pubmed.ncbi.nlm.nih.gov/?term='+str(keyword)
+work.put_nowait(url_1)
+url_2 = 'https://pubmed.ncbi.nlm.nih.gov/?term='+str(keyword)+'&page=[139]'
+for x in range(2, 30):
+    real_url = url_2.format(page=x)
+    work.put_nowait(real_url)
+def crawler():
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36'}
+    while not work.empty():
+        url = work.get_nowait()
+        res = requests.get(url, headers=headers)
+        print(url,work.qsize(),res.status_code)  #打印网址、队列长度（队列剩余任务数）、抓取请求的状态码。
+        soup_res = BeautifulSoup(res.text, 'html.parser')
+        datas = soup_res.find('div', class_="search-results-chunk results-chunk")
+        for data in datas.find_all('article'):
+            num = data.find('span', class_='position-number').text
+            title = data.find('div', class_='docsum-content').find('a')
+            name = title.text
+            link = 'https://pubmed.ncbi.nlm.nih.gov' + title['href']
+            res_abstract=requests.get(link,headers=headers)
+            soup_abstract=BeautifulSoup(res_abstract.text, 'html.parser')
+            try:
+                abstract = soup_abstract.find('div', class_='abstract-content selected').text
+            except AttributeError:
+                pass
+            with open(endfile1, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                if abstract != None:
+                    print(num + name + link + abstract)
+                    sheet.append([num,name,link,abstract])
+                    writer.writerow([num, name, link, abstract])
+                else:
+                    sheet.append([num,name,link,''])
+                    writer.writerow([num, name, link, ''])
+            wb.save(endfile2)
+tasks_list  = [ ]
+for x in range(2):    #一旦一个网址被一只爬虫取走，另一只爬虫就取不到了
+    task = gevent.spawn(crawler)
+    tasks_list.append(task)
+gevent.joinall(tasks_list)
+end = time.time()
+print(end-start)
